@@ -1,153 +1,96 @@
-#include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <vector>
 
-#include <string_view>
-
-#include <glad/glad.h>
-#include <GLFW/glfw3.h>
-
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
+
+#include "gl.h"
+#include "util.h"
 
 // TODO(Matias):
 // - Display image feed with OpenGL
 // - Draw some points on the images
 
-void glfw_error_callback(int error, const char* description) {
-  fprintf(stderr, "GLFW ERROR! %s\n", description);
-}
-
-void glfw_key_callback(GLFWwindow* window_ptr,
-                       int key,
-                       int scancode,
-                       int action,
-                       int mods) {
-  
-  if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
-    glfwSetWindowShouldClose(window_ptr, GLFW_TRUE);
-  }
-}
-
-void glfw_frambuffer_resize_callback(GLFWwindow* window_ptr, int width, int height) {
-  glViewport(0, 0, width, height);
-}
-
-
-std::vector<std::string> get_image_paths(const std::string& dataset_path) {
-  const std::string rgb_file_path = dataset_path + "rgb.txt";
-
-  FILE* fp = fopen(rgb_file_path.data(), "r");
-
-  if (fp == nullptr) {
-    fprintf(stderr, "ERROR! Unable to load rgb file: %s\n", rgb_file_path.data());
-  }
-  
-  char* line_ptr = nullptr;
-  size_t n = 0;
-  ssize_t read = 0;
-
-  getline(&line_ptr, &n, fp);
-  getline(&line_ptr, &n, fp);
-  getline(&line_ptr, &n, fp);
-
-  std::vector<std::string> image_paths;
-
-  while ((read = getline(&line_ptr, &n, fp)) != -1) {
-    std::string_view line_sw(line_ptr);
-    const auto space_position = line_sw.find(' ');
-
-    /* std::string_view timestamp_sw = line_sw.substr(0, space_position); */
-    /* std::string timestamp_str = std::string(timestamp_sw); */
-    
-    std::string_view path_sw = line_sw.substr(space_position + 1, line_sw.size() - space_position - 2);
-    
-    image_paths.emplace_back(path_sw);
-  }
-
-  return image_paths;
-}
-
-void glad_gl_post_callback(const char* function_name_ptr, void *funcptr, int len_args, ...) {
-    GLenum error_code = glad_glGetError();
-
-    if (error_code != GL_NO_ERROR) {
-      const char* error_name = nullptr;
-      switch(error_code) {
-        case GL_INVALID_ENUM: { {}
-          error_name = "GL_INVALID_ENUM";
-        } break;
-        case GL_INVALID_VALUE: {
-          error_name = "GL_INVALID_VALUE";
-        } break;
-        case GL_INVALID_OPERATION: {
-          error_name = "GL_INVALID_OPERATION";
-        } break;
-        case GL_INVALID_FRAMEBUFFER_OPERATION: {
-          error_name = "GL_INVALID_FRAMEBUFFER_OPERATION";
-        } break;
-        case GL_OUT_OF_MEMORY: {
-          error_name = "GL_OUT_OF_MEMORY";
-        } break;
-    }
-
-        fprintf(stderr, "OpenGL ERROR! %s: %s\n", function_name_ptr, error_name);
-    }
-}
-
-
-
-unsigned int compile_shader_program(
-  const char* vertex_shader_source_ptr,
-  const char* fragment_shader_source_ptr
-) {
-  constexpr size_t log_size = 1024;
-  char error_log[log_size];
-  int error_status;
-  
-  unsigned int vertex_shader = glCreateShader(GL_VERTEX_SHADER);
-  glShaderSource(vertex_shader, 1, &vertex_shader_source_ptr, nullptr);
-  glCompileShader(vertex_shader);
-
-  glGetShaderiv(vertex_shader, GL_COMPILE_STATUS, &error_status);
-  if(!error_status) {
-    glGetShaderInfoLog(vertex_shader, log_size, nullptr, error_log);
-    fprintf(stderr, "GLSL Vertex Shader Error!\n%s", error_log);
-  }
-
-  unsigned int fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
-  glShaderSource(fragment_shader, 1, &fragment_shader_source_ptr, nullptr);
-  glCompileShader(fragment_shader);
-
-  glGetShaderiv(fragment_shader, GL_COMPILE_STATUS, &error_status);
-  if(!error_status) {
-    glGetShaderInfoLog(fragment_shader, log_size, nullptr, error_log);
-    fprintf(stderr, "GLSL Fragment Shader Error!\n%s", error_log);
-  }
-  
-  unsigned int shader_program = glCreateProgram();
-  glAttachShader(shader_program, vertex_shader);
-  glAttachShader(shader_program, fragment_shader);
-  glLinkProgram(shader_program);
-
-  glGetProgramiv(shader_program, GL_LINK_STATUS, &error_status);
-  if(!error_status) {
-    glGetShaderInfoLog(shader_program, log_size, nullptr, error_log);
-    fprintf(stderr, "GLSL Shader Program Error!\n%s", error_log);
-  }
-
-  glDeleteShader(vertex_shader);
-  glDeleteShader(fragment_shader);
-
-  return shader_program;
-}
 
 struct Image {
   int width;
   int height;
   int channels;
-  unsigned char* data_ptr;
+  const unsigned char* data_ptr;
 };
+
+
+void convert_image_to_greyscale(Image* grey_image_ptr, const Image* rgb_image_ptr) {
+  grey_image_ptr->width = rgb_image_ptr->width;
+  grey_image_ptr->height = rgb_image_ptr->height;
+  grey_image_ptr->channels = 1;
+  const size_t gray_buffer_size = sizeof(unsigned char) * grey_image_ptr->width * grey_image_ptr->height;
+  unsigned char* gray_buffer_ptr = (unsigned char*)std::malloc(gray_buffer_size);
+  
+  for (int pixel_index = 0; pixel_index < rgb_image_ptr->width*rgb_image_ptr->height; ++pixel_index) {
+    const unsigned char r = rgb_image_ptr->data_ptr[3*pixel_index + 0];
+    const unsigned char g = rgb_image_ptr->data_ptr[3*pixel_index + 1];
+    const unsigned char b = rgb_image_ptr->data_ptr[3*pixel_index + 2];
+
+    gray_buffer_ptr[pixel_index] = std::min((0.299f*r + 0.587f*g + 0.114f*b), 255.0f);
+  }
+  
+  grey_image_ptr->data_ptr = gray_buffer_ptr;
+}
+
+
+const unsigned char* get_pixel_ptr(int u, int v, const Image* image_ptr) {
+  return image_ptr->data_ptr + v * image_ptr->width + u;
+}
+
+// TODO(Matias): Reorder these for better cache performance
+const int fast_pixel_offsets[] = {
+//u   v
+  0, -3, // 1
+  1, -3, // 2
+  2, -2, // 3
+  3, -1, // 4
+  3,  0, // 5
+  3,  1, // 6
+  2,  2, // 7
+  1,  3, // 8
+  0,  3, // 9
+ -1,  3, // 10
+ -2,  2, // 11
+ -3,  1, // 12
+ -3,  0, // 13
+ -3, -1, // 14
+ -2, -2, // 15
+ -1, -3, // 16
+};
+constexpr int number_of_fast_points = 16;
+
+void detect_fast_points(const Image* grey_image_ptr) {
+
+  const auto width = grey_image_ptr->width;
+  const auto height = grey_image_ptr->height;
+
+  constexpr int fast_half_size = 3;
+  
+  for (int v = fast_half_size; v < height - fast_half_size; ++v) {
+    for (int u = fast_half_size; u < width - fast_half_size; ++u) {
+
+      for (int fast_pixel_index = 0; fast_pixel_index < number_of_fast_points; ++fast_pixel_index) {
+        const int u_offset = fast_pixel_offsets[2*fast_pixel_index + 0];
+        const int v_offset = fast_pixel_offsets[2*fast_pixel_index + 1];
+
+        const unsigned char* pixel_ptr = get_pixel_ptr(u + u_offset, v + v_offset, grey_image_ptr);
+
+        unsigned char* pixel_write_ptr = const_cast<unsigned char*>(pixel_ptr);
+
+        *pixel_write_ptr = 0;
+      }
+
+      return;
+    }
+  }
+}
 
 int main() {
   std::string dataset_path("dataset/rgbd_dataset_freiburg3_long_office_household/");
@@ -156,10 +99,16 @@ int main() {
   
   std::string image_path = dataset_path + image_paths.at(0);
   
-  Image image = {};
-  image.data_ptr = stbi_load(image_path.data(), &image.width, &image.height, &image.channels, 3);
+  Image rgb_image = {};
+  rgb_image.data_ptr = stbi_load(image_path.data(), &rgb_image.width, &rgb_image.height, &rgb_image.channels, 3);
   
-  std::cout << "Image: " << image.width << "x" << image.height << ":" << image.channels << '\n';
+  std::cout << "Image: " << rgb_image.width << "x" << rgb_image.height << ":" << rgb_image.channels << '\n';
+
+  Image grey_image = {};
+  
+  convert_image_to_greyscale(&grey_image, &rgb_image);
+  
+  detect_fast_points(&grey_image);
 
   glfwSetErrorCallback(glfw_error_callback);
 
@@ -187,10 +136,10 @@ int main() {
 
   float verticies[] = {
     // x   y    z     u   v
-    0.9f,  0.9f, 0.0f, 1.0f, 1.0f,
-    0.9f, -0.9f, 0.0f, 1.0f, 0.0f,
-    -0.9f, -0.9f, 0.0f, 0.0f, 0.0f,
-    -0.9f, 0.9f, 0.0f, 0.0f, 1.0f
+    0.9f,  0.9f, 0.0f, 1.0f, 0.0f,
+    0.9f, -0.9f, 0.0f, 1.0f, 1.0f,
+    -0.9f, -0.9f, 0.0f, 0.0f, 1.0f,
+    -0.9f, 0.9f, 0.0f, 0.0f, 0.0f
   };
 
   unsigned int indicies[] = {
@@ -245,7 +194,7 @@ int main() {
     uniform sampler2D image_texture;
     
     void main() {
-      FragColor = vec4(texture(image_texture, uv).rgb, 1.0);
+      FragColor = vec4(texture(image_texture, uv).rrr, 1.0);
     }
   
   )GLSL";
@@ -256,11 +205,14 @@ int main() {
   glGenTextures(1, &image_texture);
   glBindTexture(GL_TEXTURE_2D, image_texture);
 
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, image.width, image.height, 0, GL_RGB, GL_UNSIGNED_BYTE, image.data_ptr);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, rgb_image.width, rgb_image.height, 0, GL_RED, GL_UNSIGNED_BYTE, grey_image.data_ptr);
+
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   
   int uniform_loc = glGetUniformLocation(image_shader_program, "image_texture");
-  printf("uniform_loc %i\n", uniform_loc);
 
+  glUseProgram(image_shader_program);
   glUniform1i(uniform_loc, 0);
 
   while (!glfwWindowShouldClose(window_ptr)) {
@@ -268,7 +220,6 @@ int main() {
     glClearColor(0.2f, 0.3, 0.4, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
-    glUseProgram(image_shader_program);
     glBindVertexArray(vao);
 
     glActiveTexture(GL_TEXTURE0);
